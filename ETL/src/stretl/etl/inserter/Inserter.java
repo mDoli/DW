@@ -1,0 +1,53 @@
+package stretl.etl.inserter;
+
+import java.util.LinkedList;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.common.Tuple;
+import stretl.etl.outputReady.OutputReadyArgs;
+import stretl.etl.outputReady.IOutputReadyListener;
+import stretl.etl.outputReady.IOutputReadySender;
+import stretl.etl.schema.SchemaElement;
+
+/**
+ * Data inserter base class.
+ * @author Artur
+ */
+public abstract class Inserter extends SchemaElement implements IOutputReadyListener {
+
+    public Inserter(int schemaId) {
+        super(schemaId);
+    }
+    
+    /**
+     * Method used to insert data to DW.
+     * @return TRUE if success, FALSE if failed.
+     */
+    public abstract boolean insert();
+
+    @Override
+    public void outputReady(IOutputReadySender sender, OutputReadyArgs args) {
+        // Wybieranie tylko tych krotek ktore jeszcze nie przeszly tego modulu
+        input = new LinkedList<>();
+        for (Tuple tuple : args.data) {
+            if (tuple.getSchemaElementId() != elementId)
+                input.add(tuple);
+        }
+        //input = args.data;
+        
+        //Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, "Inserting {0} tuples started.", input.size());
+        //Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, "Tuples", input.size());
+        //if (input.size() > 0)
+        //    Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, input.get(0).toString());
+        
+        success = insert();
+
+        if (success) {
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.FINE, "Insert completed.");
+            input.clear();
+        }
+        else {
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.WARNING, "Insert failed.");
+        }
+    }
+}

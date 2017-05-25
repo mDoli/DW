@@ -1,0 +1,193 @@
+package stretl.etl;
+
+import java.net.DatagramSocket;
+import java.net.SocketAddress;
+import java.util.LinkedHashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.base.BaseModule;
+import stretl.common.Entry;
+import stretl.common.Enums;
+import stretl.common.Tuple;
+import stretl.etl.backup.Backup;
+import stretl.network.NetworkTupleReader;
+import stretl.network.NetworkTupleWriter;
+
+/**
+ *
+ * @author Artur
+ */
+public class EtlModule1 extends BaseModule implements Runnable {
+    
+    private final double REFERENCE_MULTIPLY = 1.0150;
+    private final int MAXIMUM_TRANSFORM_ELEMENTS = 1000;
+        
+    private final Logger logger;
+    
+    private LinkedHashMap<Integer, Entry<Long, DatagramSocket>> connectedRifs;
+    
+    public LinkedList<ITransformer> transformationsAndBakcups = new LinkedList<>();
+    
+    public boolean isRunning = false;
+    
+    public UpdateObj updateObj;
+    
+    
+    public NetworkTupleReader networkReader;
+    
+        
+    public EtlModule1(int id, UpdateObj updateObj) {
+        super("ETL-RT", id);
+        this.logger = Logger.getLogger(this.name);
+        this.updateObj = updateObj;
+        
+        transformationsAndBakcups.add(new DeliveryTransformer());
+        transformationsAndBakcups.add(new SalesTransformer());
+        transformationsAndBakcups.add(new UnitTransformer());
+    }
+    
+    public boolean Init() {  
+        boolean success = false;
+        for (ITransformer tab : transformationsAndBakcups) {
+            success = tab.init(new Object[] {});
+        }
+        
+        return success;
+    }
+        
+    @Override
+    public void run()
+    {
+        isRunning = true;
+        networkReader = new NetworkTupleReader(this);
+        networkReader.start(); 
+        
+        int runIdx = 0;
+        // Pętla działania modułu ETL-RT:
+        while (!this.isInterrupted()) {            
+            
+            LinkedList<Tuple> processTuples = new LinkedList<>();
+            if (runIdx == 0 && !updateObj.backupList.isEmpty()) {
+                processTuples.addAll(updateObj.backupList);
+                updateObj.backupList.clear();
+                
+            } else {
+                getModuleInputQueue().drainTo(processTuples, MAXIMUM_TRANSFORM_ELEMENTS);
+            }
+            
+            List<Tuple> tankTuples = new LinkedList<>();
+            List<Tuple> nozzleTuples = new LinkedList<>();
+
+            for (Tuple tuple : processTuples) {
+                logger.log(Level.INFO, "{0} received tuple {1}", 
+                        new Object[]{this.getName(), tuple.toString()});
+
+                if (Enums.MeterType.fromInteger(tuple.getSource()) == Enums.MeterType.TANK)
+                    tankTuples.add(tuple);
+                else if (Enums.MeterType.fromInteger(tuple.getSource()) == Enums.MeterType.NOZZLE)
+                    nozzleTuples.add(tuple);
+            }
+
+            for (int i = updateObj.transformerIndex; i < transformationsAndBakcups.size(); i++) {
+                if (updateObj.continueFlag) 
+                {
+                    ITransformer t = transformationsAndBakcups.get(i);
+                    if (t instanceof Backup) 
+                    {
+                        updateObj.backupList = t.process(tankTuples);
+                    }
+                    else
+                    {
+                        tankTuples = t.process(tankTuples);
+                    }
+                    updateObj.transformerIndex++;
+                }
+                else
+                {
+                    break;
+                }
+            }
+            if (updateObj.continueFlag)
+            {
+                Loader.load(tankTuples);
+                updateObj.passCounter++;
+            }
+            updateObj.transformerIndex = 0;
+            runIdx++;
+        }
+        
+                
+    }   
+
+    @Override
+    public void interrupt() {
+        networkReader.interrupt();
+        isRunning = false;
+        updateObj.failCounter++;
+        super.interrupt(); 
+    }
+    
+    public int insertBackupPoints() {
+        
+        int backupPoints = 0;
+  
+        if (updateObj.passCounter == 0) return backupPoints;
+        
+        if (updateObj.actualPing > 0)
+        {
+            
+        }
+        
+        // pass - 100
+        // fail - x
+        // x = (fail * 100) / pass
+        /*
+        20 - 100
+        1  - x
+        x = (100) / 20 = 5%;
+        */
+        int failPerc = (updateObj.failCounter * 100) / updateObj.passCounter;
+        
+        if (failPerc >= 0)
+            tryInsertBackupPoint();
+        if (failPerc >= 25)
+            tryInsertBackupPoint();
+        if (failPerc >= 50)
+            tryInsertBackupPoint();
+        if (failPerc >= 75)
+            tryInsertBackupPoint();
+        
+        logger.log(Level.INFO, printTransformers());
+        
+        return backupPoints;
+    }
+    
+    
+    
+    private void tryInsertBackupPoint()
+    {
+        int lastBackupIndex = 0;
+        for (ITransformer tab : transformationsAndBakcups) {
+            if (tab instanceof Backup)
+            {
+                lastBackupIndex = transformationsAndBakcups.lastIndexOf(tab);
+            }
+        }
+                
+        if (lastBackupIndex < (transformationsAndBakcups.size() - 1))
+            transformationsAndBakcups.add(lastBackupIndex + 2, new Backup());
+    }
+
+    private String printTransformers() {
+        StringBuilder sb = new StringBuilder();
+        for (ITransformer tab : transformationsAndBakcups) {
+            sb.append(tab.toString());
+            sb.append('-');
+        }
+        return sb.toString();
+    }
+}

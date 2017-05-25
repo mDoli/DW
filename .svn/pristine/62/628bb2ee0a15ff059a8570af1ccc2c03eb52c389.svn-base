@@ -1,0 +1,218 @@
+package stretl.common;
+
+import java.io.ByteArrayInputStream;
+import java.io.ByteArrayOutputStream;
+import java.io.IOException;
+import java.io.ObjectInputStream;
+import java.io.ObjectOutputStream;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collection;
+import java.util.Objects;
+
+
+/**
+ * Klasa obiektu krotki. Obiekt ten dziedziczy po pewnej implementacji Listy.
+ * Dzięki czemu możliwe jest rzutowanie bajtowych reprezentacji KROTEK na
+ * obiekty oraz wypisywanie krotek w formie tablic dwuwymiarowuch.
+  *
+ * @author Artur Drzeniek <artudrz156@student.polsl.pl>
+ * @param <T> Dane w krotce występują w różnych typach.
+ */
+public class Tuple<T> extends ArrayList<T> implements Cloneable {
+
+    
+    public Tuple() { };
+    
+    public Tuple(int size) { super(size); }
+    
+    public Tuple(Collection<? extends T> clctn) {
+        super(clctn);
+        //super.addAll(clctn);
+    }
+
+    /**
+     *
+     * @return
+     */
+    @Override
+    public Tuple<T> clone() {
+        return (Tuple<T>) super.clone();
+    }
+
+    @Override
+    public String toString() {
+        return super.toString().replace("[", "").replace("]", "");
+    }
+    
+    public Integer getSource() {
+        if (this.get(0) != null && this.get(0) instanceof Integer)
+            return (Integer)this.get(0);
+        else
+            return null;
+    }
+    
+    public void setSource(Integer source)
+    {
+        this.set(0, (T)source);
+    }
+    
+    public LocalDateTime getTimeStamp(){
+        if (this.get(1) != null && this.get(1) instanceof LocalDateTime)
+            return (LocalDateTime)this.get(1);
+        else
+            return null;
+    }
+    
+    public Timestamp getTimestamp() {
+        LocalDateTime ldt = getTimeStamp();
+        if (ldt != null) return Timestamp.valueOf(ldt);
+        else return null;
+    }
+    
+    public void setTimeStamp(LocalDateTime timestamp)
+    {
+        this.set(1, (T)timestamp);
+    }    
+    public void setTimeStamp(Timestamp timestamp)
+    {
+        if (timestamp != null)
+            this.set(1, (T)(timestamp.toLocalDateTime()));
+        else
+            this.set(1, null);
+    }
+        
+    public Double getVolume() {
+        if (this.get(2) != null && this.get(2) instanceof Double)
+            return (Double)this.get(2);
+        else
+            return null;
+    }
+    
+    public void setVolume(Double volume) {
+        this.set(2, (T)volume);
+    }
+    
+    public Double getWaterLevel() {
+        if (this.get(3) != null && this.get(3) instanceof Double)
+            return (Double)this.get(3);
+        else
+            return null;
+    }
+    
+    public void setWaterLevel(Double e) {
+        this.set(3, (T)e);
+    }
+    
+    public Double getTemperature() {
+        if (this.get(4) != null && this.get(4) instanceof Double)
+            return (Double)this.get(4);
+        else
+            return 0.0;
+    }
+    
+    public void setTemperature(Double temperature) {
+        this.set(4, (T)temperature);
+    }
+    
+    public Integer getSchemaElementId() {
+        if (this.get(5) != null && this.get(5) instanceof Integer)
+            return (Integer)this.get(5);
+        else
+            return 0;
+    }
+    
+    public void setSchemaElementId(Integer schemaElementId) {
+        this.set(5, (T)schemaElementId);
+    }
+    
+    // Nozzle
+    public Double getNetVolume() {
+        if (this.get(6) != null && this.get(6) instanceof Double)
+            return (Double)this.get(6);
+        else
+            return null;
+    }
+    
+    public void setNetVolume(Double e) {
+        this.set(6, (T)e);
+    }
+    
+    public double getNozzleTotalCounter()
+    {
+        if (Enums.MeterType.fromInteger(this.getSource()) == Enums.MeterType.NOZZLE)
+        {
+            if (this.get(2) instanceof Double)
+            {
+                return (Double)this.get(2);
+            }
+        }
+        return Double.NaN;
+    }
+    
+    /**
+     *
+     * @param obj
+     * @return
+     * @throws IOException
+     */
+    public static byte[] serialize(Tuple obj) throws IOException {
+        ByteArrayOutputStream b = new ByteArrayOutputStream();
+        ObjectOutputStream o = new ObjectOutputStream(b);
+        o.writeObject(obj);
+        return b.toByteArray();
+    }
+    
+    /**
+     *
+     * @param bytes
+     * @return
+     * @throws IOException
+     * @throws ClassNotFoundException
+     */
+    public static Tuple deserialize(byte[] bytes) throws IOException, ClassNotFoundException {
+        ByteArrayInputStream b = new ByteArrayInputStream(bytes);
+        ObjectInputStream o = new ObjectInputStream(b);        
+        Object obj = o.readObject();
+        
+        if (obj instanceof Object[])        
+            return new Tuple(Arrays.asList((Object[])obj));        
+        else if (obj instanceof Tuple)        
+            return (Tuple)obj;        
+        else
+            return null;
+    }
+    
+    /**
+     *
+     * @param bytes
+     * @return
+     * @throws IOException
+     * @throws ClassNotFoundException
+     */
+    public static Object deserializeToObj(byte[] bytes) throws IOException, ClassNotFoundException {
+        ByteArrayInputStream b = new ByteArrayInputStream(bytes);
+        ObjectInputStream o = new ObjectInputStream(b);        
+        Object obj = o.readObject();
+        return obj;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+        if (o instanceof Tuple)
+        {
+            Tuple t = (Tuple)o;
+            return Objects.equals(this.getSource(), t.getSource()) && this.getTimeStamp() == t.getTimeStamp();
+        }
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return this.getTimeStamp().hashCode();
+    }
+    
+    
+}

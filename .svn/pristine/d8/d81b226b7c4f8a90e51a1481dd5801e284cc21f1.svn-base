@@ -1,0 +1,54 @@
+package stretl.etl.transformer;
+
+import java.util.LinkedList;
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.common.Tuple;
+import stretl.etl.outputReady.OutputReadyArgs;
+import stretl.etl.outputReady.IOutputReadyListener;
+import stretl.etl.outputReady.IOutputReadySender;
+import stretl.etl.outputReady.OutputReadySender;
+import stretl.etl.schema.SchemaElement;
+
+/**
+ * Data transformer class.
+ * @author Artur
+ */
+public abstract class Transformer extends SchemaElement {
+
+    public Transformer(int schemaId) {
+        super(schemaId);
+    }
+    
+    /**
+     * Transforms data when implemented.
+     * @return TRUE if transform end with success, otherwhise FALSE.
+     */
+    public abstract boolean transform();
+    
+    @Override
+    public void outputReady(IOutputReadySender sender, OutputReadyArgs args) {
+        input = args.data;
+        
+        Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, "Transforming {0} tuples.", input.size());
+        
+        boolean success = transform();
+        
+        if (success) {
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.FINE, "Transform completed.");
+            
+            output.stream().forEach((tuple) ->  tuple.setSchemaElementId(elementId));
+            
+            notifyAllListeners(new OutputReadyArgs(output)); 
+        }
+        else {
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.WARNING, "Transform failed.");
+        }
+    }
+    
+    @Override
+    public String toString() {
+        return "Transformer{" + this.getClass().getSimpleName()+ '}';
+    }
+}

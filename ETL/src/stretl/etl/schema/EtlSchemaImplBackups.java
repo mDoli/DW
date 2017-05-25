@@ -1,0 +1,58 @@
+
+package stretl.etl.schema;
+
+import stretl.etl.UpdateObj;
+import stretl.etl.backup.CheckPoint;
+import stretl.etl.extractor.ExtractorImpl;
+import stretl.etl.inserter.InserterImpl;
+import stretl.etl.transformer.TransformerImpl;
+
+/**
+ * Implementacja 1 schematu ETL.
+ * @author Artur Drzeniek.
+ */
+public class EtlSchemaImplBackups extends EtlSchema {
+
+    public EtlSchemaImplBackups(UpdateObj updateObj, int schemaId) {
+        super(updateObj, schemaId);
+    }
+
+
+    @Override
+    public void build() {
+        /*
+        E -> T -> T -> T -> I
+        |    |    |
+        CP   CP   CP
+        */
+        addExtractor(new ExtractorImpl(source, updateObj, schemaId));
+        
+        addTransform(new TransformerImpl(schemaId));
+        addTransform(new TransformerImpl(schemaId));
+        addTransform(new TransformerImpl(schemaId, true));
+        
+        addInserter(new InserterImpl(schemaId));
+        
+        addCheckPoint(new CheckPoint(schemaId));
+        addCheckPoint(new CheckPoint(schemaId));
+        addCheckPoint(new CheckPoint(schemaId));
+        
+        for (int i = 0; i < allElements.size(); i++) {
+            allElements.get(i).setElementId(i);
+            allElements.get(i).setParentSchema(this);
+        }
+        
+        getExtractor(0).addListener(getCheckPoint(0));
+        getExtractor(0).addListener(getTransform(0));
+        
+        getTransform(0).addListener(getCheckPoint(1));
+        getTransform(0).addListener(getTransform(1));
+        
+        getTransform(1).addListener(getCheckPoint(2));
+        getTransform(1).addListener(getTransform(2));
+        
+        getTransform(2).addListener(getInserter(0));
+        
+    }
+    
+}

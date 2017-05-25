@@ -1,0 +1,180 @@
+package stretl.etl;
+
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.base.BaseModule;
+import stretl.common.Tuple;
+import stretl.dataprovider.DataProvider;
+import stretl.etl.schema.EtlSchema;
+import stretl.etl.schema.EtlSchemaImplBackups;
+import stretl.network.NetworkTupleReader;
+import stretl.etl.schema.IEtlSchema;
+
+/**
+ *
+ * @author Artur
+ */
+public class EtlModule extends BaseModule implements Runnable {
+        
+    private final Logger logger;
+    
+    public boolean isRunning = false;
+    
+    public UpdateObj updateObj;
+    
+    public NetworkTupleReader networkReader;
+    
+    private List<IEtlSchema> schemas = new LinkedList<>();
+    
+    ExecutorService executor;
+    
+    HashMap<Future<Boolean>, EtlSchema> runningSchemas = new HashMap<>();
+        
+    DataProvider dataProvider = new DataProvider();
+    
+    public EtlModule(int id, UpdateObj updateObj) {
+        super("ETL-RT", id);
+        this.logger = Logger.getLogger(this.name);
+        this.updateObj = updateObj;
+    }
+    
+    public boolean Init() {  
+        
+        return true;
+    }
+        
+    @Override
+    public void run()
+    {
+        isRunning = true;
+        
+        // Wątek odczytujący z sieci i wstawiający krotki do kolejki wejściowej modułu.
+        networkReader = new NetworkTupleReader(this);
+        networkReader.start();         
+        updateObj.runIdx = 0;
+        
+        List<Tuple> tankTuples = new LinkedList<>();
+        
+        // Schemat ETL
+        UpdateObj s0UpdObj = new UpdateObj();
+        //schemas.add(new EtlSchemaImpl(s0UpdObj, 0));
+        
+        UpdateObj s1UpdObj = new UpdateObj();
+        schemas.add(new EtlSchemaImplBackups(s1UpdObj, 1));
+        // Tu więcej schematów
+        
+        
+        
+        schemas.stream().forEach((schema) -> { 
+            schema.setSource(tankTuples); 
+            schema.build(); 
+        });
+        
+        // Schemas thread pool init
+        executor = Executors.newCachedThreadPool();
+        
+        // Submit schemas to threadpool.
+        while (!this.isInterrupted()) 
+        {
+            waitIfModuleInputQueueIsEmpty();
+            
+            getModuleInputQueue().drainTo(tankTuples, 1000);
+            
+            dataProvider.connect();
+            
+            for (IEtlSchema s : schemas) {
+                
+                s.setSource(tankTuples);
+                
+                Future<Boolean> future = executor.submit((EtlSchema)s); 
+                
+                Logger.getLogger(EtlModule.class.getName()).log(Level.INFO, "{0} submited.", s.toString());
+                
+                runningSchemas.put(future, ((EtlSchema)s));
+            }
+            
+            for (Map.Entry<Future<Boolean>, EtlSchema> runningSchema : runningSchemas.entrySet()) {
+                Future<Boolean> runningFuture = runningSchema.getKey();
+                EtlSchema schema = runningSchema.getValue();
+                
+                try {
+                    // Oczekuje na wynik jeśli trzeba czekać.
+                    boolean success = runningFuture.get();
+                    
+                    if (success) {
+                        Logger.getLogger(EtlModule.class.getName())
+                            .log(Level.INFO, "{0} finished with success", schema.toString());
+                        
+                        schema.updateObj.failed = false;
+                        
+                        try {
+                            // Usuwamy niepotrzebne punkty kontrolne
+                            dataProvider.deleteBackup(schema.schemaId);
+                        } catch (SQLException ex) {
+                            Logger.getLogger(EtlModule.class.getName()).log(Level.SEVERE, null, ex);
+                        }
+                    }
+                    else {
+                        schema.updateObj.failed = true;
+                        // Nie usuwamy ostaniego punktu kontrolnego, 
+                        // więc zostanie wczytany przy najstępnym uruchomieniu
+                    }
+                } catch (InterruptedException | ExecutionException ex) {
+                    Logger.getLogger(EtlModule.class.getName()).log(Level.SEVERE, null, ex);
+                    schema.updateObj.failed = true;
+                } catch (CancellationException ex) {
+                    schema.updateObj.failed = true;
+                }
+            }
+            runningSchemas.clear();
+            tankTuples.clear();
+            dataProvider.disconnect();
+        }
+        // This will make the executor accept no new threads
+        // and finish all existing threads in the queue
+        executor.shutdown();
+    }   
+
+    private void waitIfModuleInputQueueIsEmpty() {
+        if (getModuleInputQueue().isEmpty())
+        {
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ex) {
+                
+            }
+        }
+    }
+
+    @Override
+    public void interrupt() {
+        // Przerwanie wybranego schematu
+        Future<Boolean> runningFuture = runningSchemas.keySet().iterator().next();
+        EtlSchema schema = runningSchemas.values().iterator().next();
+        if (runningFuture.cancel(true)) {            
+            schema.updateObj.runIdx = 0;
+            Logger.getLogger(EtlModule.class.getName()).log(Level.WARNING, "{0} canceled", schema.toString());
+        }
+        else {            
+            Logger.getLogger(EtlModule.class.getName()).log(Level.WARNING, "{0} not canceled", schema.toString());
+        }
+        
+        // Przerwanie dla całego modułu
+//        networkReader.interrupt();
+//        if (executor != null) executor.shutdownNow();
+//        isRunning = false;
+//        updateObj.failCounter++;
+//        super.interrupt(); 
+    }
+    
+}

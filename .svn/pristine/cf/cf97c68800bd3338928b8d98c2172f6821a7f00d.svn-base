@@ -1,0 +1,16 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project-private xmlns="http://www.netbeans.org/ns/project-private/1">
+    <editor-bookmarks xmlns="http://www.netbeans.org/ns/editor-bookmarks/2" lastBookmarkId="0"/>
+    <open-files xmlns="http://www.netbeans.org/ns/projectui-open-files/2">
+        <group>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/backup/CheckPoint.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/schema/EtlSchema.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/EtlModule.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/UpdateObj.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/schema/EtlSchemaImplBackups.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/ETL.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/extractor/ExtractorImpl.java</file>
+            <file>file:/C:/Users/Artur/OneDrive/Studia/SSM/Semestr%203/Mgr/Projekt/ETL/src/stretl/etl/transformer/TransformerImpl.java</file>
+        </group>
+    </open-files>
+</project-private>

@@ -1,0 +1,26 @@
+package stretl.etl.inserter;
+
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.common.Tuple;
+
+
+public class InserterImpl extends Inserter {
+
+    public InserterImpl(int schemaId) {
+        super(schemaId);
+    }
+    
+    @Override
+    public boolean insert() {
+        try {
+            for (Tuple tuple : input) {
+                if (tuple != null) {
+                    //Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, "{0} inserted", tuple.toString());
+                    tuple = null;
+                }
+            }
+        } catch (Exception ex) { return false; }
+        return true;
+    }
+}

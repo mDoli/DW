@@ -1,0 +1,33 @@
+PODSTAWOWA KONFIGURACJA SILNIKA
+
+GENERATOR:
+- porty 60000 - 60099 (100) aktualnie do 17
+
+======= SOURCE
+Argumenty [{adres_nadawcy port_nadawcy}(1) {port_wyjœciowy} {port_wyjœciowy}(...)]
+
+Wejœcie
+ - adres nadawcy krotek.
+ - port nadawcy krotek.
+
+Wyjœcie
+ - porty wyjœciowe od 60100 - 60199 (100)
+
+======= RBF (max 3 kana³y) !(argumenty) ( 1kana³ jedneno Ÿród³o)
+Argumenty: [{port_nadawcy adres_nadawczy}(3) {port_wyjsciowy}(...)]
+Wejœcie 
+ - adress nadawcy - adres komputera na którym nadaje Ÿród³o
+ - port nadawcy - port na którym nadaje Ÿród³o
+
+Wyjœcie
+ - porty nadawcze 60200 - 60299 (100)
+
+======= RIF
+Argumenty: [{adres_nadawcy port_nadawcy}(2) {port_nadawczy}(...)]
+
+Wejœcie (max 2 kana³y)
+ - adres odbiorczy
+ - port odbiorczy
+
+Wyjscie
+ - porty nadawcze: 60300 - 60350 (50)

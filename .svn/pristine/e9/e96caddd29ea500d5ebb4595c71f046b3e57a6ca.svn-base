@@ -1,0 +1,25 @@
+package stretl.etl.transformer;
+
+import stretl.common.Tuple;
+
+public class TransformerImpl extends Transformer {
+
+    public TransformerImpl(int schemaId) {
+        super(schemaId);
+    }
+
+    @Override
+    public boolean transform() {
+        try {
+            for (Tuple tuple : input) {
+                Thread.sleep(200);
+                tuple.setSchemaElementId(elementId);
+            }
+            output = input;
+        } catch (InterruptedException ex) {
+            //Logger.getLogger(TransformerImpl.class.getName()).log(Level.SEVERE, null, ex);
+            return false;
+        }
+        return true;
+    }    
+}

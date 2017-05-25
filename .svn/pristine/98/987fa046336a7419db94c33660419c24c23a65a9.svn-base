@@ -1,0 +1,361 @@
+package stretl.dataprovider;
+
+import java.sql.Connection;
+import java.sql.DriverManager;
+import java.sql.PreparedStatement;
+import java.sql.ResultSet;
+import java.sql.SQLException;
+import java.sql.Timestamp;
+import java.time.LocalDateTime;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Properties;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.common.Tuple;
+/**
+ *
+ * @author Artur
+ */
+public class DataProvider {
+    
+    Connection conn = null;
+    
+    public DataProvider() {
+        
+    }
+    
+    public boolean connect()
+    {
+        try {
+            conn = getConnection();
+            return true;
+        } catch (SQLException ex) {
+            Logger.getLogger(DataProvider.class.getName()).log(Level.SEVERE, null, ex);
+            return false;
+        }
+    }
+    
+    public Connection getConnection() throws SQLException {
+        
+        if (conn != null)
+            return conn;
+        
+        Properties connectionProps = new Properties();
+        connectionProps.put("user", Settings.DB_USERNAME);
+        connectionProps.put("password", Settings.DB_PASSWORD);
+        try {
+            Class.forName("com.mysql.jdbc.Driver");
+        } catch (ClassNotFoundException ex) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, null, ex);
+        }
+        conn = DriverManager.getConnection(
+                   "jdbc:" + Settings.DB_DBMS + "://" +
+                   Settings.DB_SERVER +
+                   ":" + Settings.DB_SERVER_PORT + "/" + Settings.DB_NAME,
+                   connectionProps);
+        conn.setAutoCommit(false);
+        
+        //System.out.println("Connected to database");
+        return conn;
+    }
+    
+    public boolean saveTankTuple(Tuple tuple, long channelId)
+    {
+        if (conn == null)
+        {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "No connection estabilished. Save failed.");
+            return false;
+        }
+        PreparedStatement stmt = null;
+        try {            
+            String sql = "INSERT INTO `etl-stream`.tank_tuples"
+                    + "(channel_id, timestamp, fuel_volume, water_level, temperature, source_id) VALUES"
+                    + "(?,?,?,?,?,?)";
+            
+            stmt = conn.prepareStatement(sql);
+            stmt.setLong(1, channelId);            
+            stmt.setTimestamp(2, tuple.getTimestamp());
+            stmt.setDouble(3, tuple.getVolume());
+            stmt.setDouble(4, tuple.getWaterLevel());
+            
+            if (tuple.getTemperature() != null)
+                stmt.setDouble(5, tuple.getTemperature());
+            
+            stmt.setInt(6, tuple.getSource());
+            
+            stmt.executeUpdate();
+            conn.commit();
+        } catch (SQLException ex) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Database insert failed.", ex);
+        } catch (ArrayIndexOutOfBoundsException ex) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Tuple corrupted. Not saved to database.");
+        }
+        finally {
+            try {
+                if (stmt != null) 
+                    stmt.close();                
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+            }
+        }
+        
+        return true;
+    }
+    
+    public LinkedList<Tuple> loadTankTuples(int sourceId, LocalDateTime startTime, LocalDateTime endTime)
+    {
+        if (conn == null)
+        {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "No connection estabilished. Save failed.");
+            return new LinkedList<>();
+        }
+        
+        LinkedList<Tuple> tuples = new LinkedList<>();
+        PreparedStatement stmt = null;
+        try {
+            Timestamp startTimeStamp = Timestamp.valueOf(startTime);
+            Timestamp endTimeStamp = Timestamp.valueOf(endTime);
+            
+            String sql = "SELECT * FROM `etl-stream`.tank_tuples"
+                    + " WHERE source_id = ? AND time_stamp <= ? AND time_stamp >= ?";
+            
+            stmt = conn.prepareStatement(sql);
+            stmt.setInt(1, sourceId);
+            stmt.setTimestamp(2, startTimeStamp);
+            stmt.setTimestamp(3, endTimeStamp);
+            
+            ResultSet rs = stmt.executeQuery();
+            
+            while (rs.next())
+            {
+                Tuple tuple = new Tuple();
+                tuple.setSource(rs.getInt("source_id"));
+                
+                Timestamp ts = rs.getTimestamp("timestamp");
+                if (ts != null) tuple.setTimeStamp(ts.toLocalDateTime());
+                
+                tuple.setVolume(rs.getDouble("fuel_volume"));
+                tuple.setWaterLevel(rs.getDouble("water_level"));
+                tuple.setTemperature(rs.getDouble("temperature"));
+                
+                tuples.add(tuple);
+            }
+            
+        } catch (SQLException ex) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Database insert failed.", ex);
+        } catch (ArrayIndexOutOfBoundsException e) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Tuple corrupted. Not saved to database.");
+        }
+        finally {
+            try {
+                if (stmt != null) 
+                    stmt.close();                
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+            }
+        }
+        return tuples;
+    }
+    
+    public boolean disconnect()
+    {
+        if (conn != null)
+        {
+            try {     
+                if (!conn.isClosed()) {   
+                    conn.commit();
+                    conn.close();
+                }                
+            } catch (SQLException ex) {
+                Logger.getLogger(DataProvider.class.getName()).log(Level.SEVERE, null, ex);
+                return false;
+            }
+            finally {
+                conn = null;
+            }
+            
+            return true;
+        }
+        else 
+            return true;
+    }
+    
+    public boolean checkConnection() throws SQLException {
+        boolean isConnected = false;
+        if (conn == null)  
+            isConnected = connect();
+        else 
+            isConnected = conn.isValid(5);
+        return isConnected;
+    }
+    
+    public int getEtlRunId() {
+        int run_id = 0;
+        PreparedStatement stmt = null;
+        try {
+            if (checkConnection())
+            {                
+                try {            
+                    String sql = "SELECT run_id from `etl-stream`.etlrun";
+                    stmt = conn.prepareStatement(sql);
+                    ResultSet rs = stmt.executeQuery();
+                    while (rs.next())
+                    {
+                        run_id = rs.getInt("run_id");
+                    }
+                    
+                    sql = "UPDATE `etl-stream`.etlrun SET run_id = ?";
+                    stmt = conn.prepareStatement(sql);
+                    stmt.setLong(1, run_id + 1);
+                    stmt.executeUpdate();
+                    conn.commit();
+                }
+                catch (SQLException ex)
+                {
+                    Logger.getLogger(DataProvider.class.getName()).log(Level.SEVERE, null, ex);
+                }
+            }
+            else 
+                return run_id;
+        } catch (SQLException ex) {
+            Logger.getLogger(DataProvider.class.getName()).log(Level.SEVERE, null, ex);
+            return run_id;
+        }
+        finally {
+            try {
+                if (stmt != null) 
+                    stmt.close();                
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+            }
+        }
+        return run_id;
+    }
+  
+    
+    public boolean saveBackup(List<Tuple> list, int schemaId) throws SQLException {
+                
+        if (checkConnection()) {
+            PreparedStatement stmt = null;
+            try {            
+                String sql = "INSERT INTO etl_backup(timestamp, fuel_volume, water_level, temperature, source_id, BCK_TIMESTAMP, SCHEMA_ID, TUPLE_ID, ELEMENT_ID) \n" +
+                    "VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?) \n" +
+                    "ON DUPLICATE KEY \n" +
+                    "UPDATE \n" +
+                    "    timestamp = (timestamp), \n" +
+                    "    fuel_volume = (fuel_volume),\n" +
+                    "    water_level = (water_level),\n" +
+                    "    temperature = (temperature),\n" +
+                    "    source_id = (source_id),\n" +
+                    "    BCK_TIMESTAMP = (BCK_TIMESTAMP),\n" +
+                    "    ELEMENT_ID = (ELEMENT_ID)";
+
+                for (int i = 0; i < list.size(); i++) {
+                    Tuple tuple = list.get(i);
+                    stmt = conn.prepareStatement(sql);
+                           
+                    stmt.setTimestamp(1, tuple.getTimestamp());
+                    stmt.setDouble(2, tuple.getVolume());
+                    stmt.setDouble(3, tuple.getWaterLevel());
+
+                    if (tuple.getTemperature() != null)
+                        stmt.setDouble(4, tuple.getTemperature());
+
+                    stmt.setInt(5, tuple.getSource());
+                    stmt.setTimestamp(6, Timestamp.valueOf(LocalDateTime.now()));  
+                    stmt.setInt(7, schemaId);
+                    stmt.setInt(8, i);
+                    stmt.setInt(9, tuple.getSchemaElementId());
+                    
+                    stmt.executeUpdate(); 
+                }
+                conn.commit();
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Database insert failed.", ex);
+            } catch (ArrayIndexOutOfBoundsException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Tuple corrupted. Not saved to database.");
+            }
+            finally {
+                try {
+                    if (stmt != null) 
+                        stmt.close();                
+                } catch (SQLException ex) {
+                    Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+                }
+            }
+        }
+        else {
+            throw new SQLException("Unable to connect");
+        }
+        
+        return true;
+    }
+    
+    public List<Tuple> readBackup(int schemaId) {
+        LinkedList<Tuple> tuples = new LinkedList<>();
+        PreparedStatement stmt = null;
+        try {            
+            String sql = "SELECT * FROM `etl-stream`.etl_backup WHERE SCHEMA_ID = ?";
+            
+            stmt = conn.prepareStatement(sql);
+            stmt.setInt(1, schemaId);
+            
+            ResultSet rs = stmt.executeQuery();
+            
+            while (rs.next())
+            {
+                Tuple tuple = new Tuple();
+                tuple.setSource(rs.getInt("source_id"));
+                
+                Timestamp ts = rs.getTimestamp("timestamp");
+                if (ts != null) tuple.setTimeStamp(ts.toLocalDateTime());
+                
+                tuple.setVolume(rs.getDouble("fuel_volume"));
+                tuple.setWaterLevel(rs.getDouble("water_level"));
+                tuple.setTemperature(rs.getDouble("temperature"));
+                
+                tuples.add(tuple);
+            }
+            
+        } catch (SQLException ex) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Database select failed.", ex);
+        } catch (ArrayIndexOutOfBoundsException e) {
+            Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Tuple corrupted.");
+        }
+        finally {
+            try {
+                if (stmt != null) 
+                    stmt.close();                
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+            }
+        }
+        return tuples;
+    }
+    
+    public void deleteBackup(int schemaId) throws SQLException {
+        if (checkConnection()) {
+            PreparedStatement stmt = null;
+            try {            
+                String sql = "delete from etl_backup WHERE SCHEMA_ID = ?";
+
+                stmt = conn.prepareStatement(sql);
+                stmt.setInt(1, schemaId);            
+                stmt.execute();
+                conn.commit();
+                
+            } catch (SQLException ex) {
+                Logger.getLogger("DataProviderLogger").log(Level.SEVERE, "Database delete failed.", ex);
+            }
+            finally {
+                try {
+                    if (stmt != null) 
+                        stmt.close();                
+                } catch (SQLException ex) {
+                    Logger.getLogger("DataProviderLogger").log(Level.WARNING, "Statement close failed.", ex);
+                }
+            }
+        }
+    }
+}

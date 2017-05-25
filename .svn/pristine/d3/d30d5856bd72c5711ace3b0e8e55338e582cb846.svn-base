@@ -1,0 +1,276 @@
+package stretl.etl;
+
+import java.sql.SQLException;
+import java.util.HashMap;
+import java.util.LinkedList;
+import java.util.List;
+import java.util.Map;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.base.BaseModule;
+import stretl.common.Tuple;
+import stretl.dataprovider.DataProvider;
+import stretl.etl.schema.EtlSchema;
+import stretl.etl.schema.EtlSchemaImplBackups;
+import stretl.network.NetworkTupleReader;
+import stretl.etl.schema.IEtlSchema;
+
+/**
+ *
+ * @author Artur
+ */
+public class EtlModule extends BaseModule implements Runnable {
+        
+    private final Logger logger;
+    
+    public boolean isRunning = false;
+    
+    public UpdateObj updateObj;
+    
+    public NetworkTupleReader networkReader;
+    
+    private List<IEtlSchema> schemas = new LinkedList<>();
+    
+    ExecutorService executor;
+    
+    HashMap<Future<Boolean>, EtlSchema> runningSchemas = new HashMap<>();
+    
+    HashMap<Future<Boolean>, EtlSchema> failedSchemas = new HashMap<>();    
+    
+    DataProvider dataProvider = new DataProvider();
+    
+    public EtlModule(int id, UpdateObj updateObj) {
+        super("ETL-RT", id);
+        this.logger = Logger.getLogger(this.name);
+        this.updateObj = updateObj;
+    }
+    
+    public boolean Init() {  
+        
+        return true;
+    }
+        
+    @Override
+    public void run()
+    {
+        isRunning = true;
+        
+        // Wątek odczytujący z sieci i wstawiający krotki do kolejki wejściowej modułu.
+        networkReader = new NetworkTupleReader(this);
+        networkReader.start();         
+        updateObj.runIdx = 0;
+        
+        List<Tuple> moduleDataSource = new LinkedList<>();
+        
+        // Schemat ETL
+        UpdateObj s0UpdObj = new UpdateObj();
+        //schemas.add(new EtlSchemaImpl(s0UpdObj, 0));
+        
+        UpdateObj s1UpdObj = new UpdateObj();
+        schemas.add(new EtlSchemaImplBackups(s1UpdObj, 1));
+        // Tu więcej schematów
+        
+        BuildSchemasWithReferenceToDataSource(moduleDataSource);
+        
+        // Schemas thread pool init
+        executor = Executors.newCachedThreadPool();
+        
+        dataProvider.connect();
+        
+        // Submit schemas to threadpool.
+        while (!this.isInterrupted()) 
+        {
+            waitIfModuleInputQueueIsEmpty();
+            
+            if (failedSchemas.isEmpty())
+            {
+                Logger.getLogger(EtlModule.class.getName())
+                        .log(Level.SEVERE, "No failed schemas.");
+            }
+            else
+            {
+                for (Map.Entry<Future<Boolean>, EtlSchema> entry : failedSchemas.entrySet()) {
+                    EtlSchema schema = entry.getValue();
+                    // Wczytanie danych do schematu z punktu kontrolnego
+                    schema.setSource(dataProvider.readBackup(schema.schemaId));
+                    
+                    try {
+                        // Uruchomienie schematu
+                        Future<Boolean> future = executor.submit((EtlSchema)schema);
+                        Logger.getLogger(EtlModule.class.getName())
+                            .log(Level.INFO, "{0} submited.", schema.toString());
+                        
+                        boolean success = false;
+                        // Trzy proby ponownego uruchomienia schematu
+                        for (int i = 0; i < 3; i++) {
+                            // Oczekiwanie na wykonanie schematu
+                            success = future.get();
+                            
+                            // tests
+                            //success = true;
+                            
+                            // Gdy sie powiedzie zostanie przerwane powtarzanie
+                            if (success) 
+                            {
+                                Logger.getLogger(EtlModule.class.getName())
+                                    .log(Level.INFO, "{0} recovery success.", schema.toString());
+                                break;
+                            }
+                            else
+                            {
+                                Logger.getLogger(EtlModule.class.getName())
+                                    .log(Level.INFO, String.format("{0} recovery failed {1} times", schema.toString(), i + 1));
+                            }
+                        }
+                        
+                        // Jesli nadal sie nie powiodlo to trzeba usunac schemat
+                        if (success == false)
+                        {
+                            Logger.getLogger(EtlModule.class.getName())
+                                    .log(Level.INFO, String.format("{0} recovery failed maximum times. Wouldn't be run again.", 
+                                            schema.toString()));
+                            if (runningSchemas.containsKey(future))
+                            {
+                                runningSchemas.remove(future);
+                                Logger.getLogger(EtlModule.class.getName())
+                                    .log(Level.SEVERE, String.format("{0} has been removed from running schemas.", 
+                                        schema.toString()));
+                            }                        
+                        }
+                    } catch (InterruptedException | ExecutionException ex) {
+                        Logger.getLogger(EtlModule.class.getName())
+                                .log(Level.SEVERE, "Recovery failed", ex);
+                    }
+                }
+                
+                failedSchemas.clear();
+            }
+            
+            UpdateModuleDataSourceWithDataFromInputQueue(moduleDataSource);
+            
+            RunAllSchemasInThreadPoolAndReturnFutures(moduleDataSource);
+            
+            CheckSchemasFuturesResultsAndTakeAction();
+            
+            runningSchemas.clear();
+            moduleDataSource.clear();
+            
+        }
+        dataProvider.disconnect();
+        // This will make the executor accept no new threads
+        // and finish all existing threads in the queue
+        executor.shutdown();
+        
+    }   
+
+    private void BuildSchemasWithReferenceToDataSource(List<Tuple> moduleDataSource) {
+        schemas.stream().forEach((schema) -> {
+            schema.setSource(moduleDataSource);
+            schema.build();
+        });
+    }
+
+    private void CheckSchemasFuturesResultsAndTakeAction() {
+        for (Map.Entry<Future<Boolean>, EtlSchema> runningSchema : runningSchemas.entrySet()) {
+            Future<Boolean> runningFuture = runningSchema.getKey();
+            EtlSchema schema = runningSchema.getValue();
+            
+            try {
+                // Pobiera wynik działania schematy.
+                // Oczekuje na wynik jeśli trzeba czekać.
+                boolean success = runningFuture.get();
+                
+                if (success) {
+                    DeleteSchemaFromDatabase(schema);
+                }
+                else {
+                    AddSchemaToRecover(runningFuture, schema);
+                }
+            } catch (InterruptedException | ExecutionException ex) {
+                Logger.getLogger(EtlModule.class.getName()).log(Level.SEVERE, null, ex);
+                schema.updateObj.failed = true;
+            } catch (CancellationException ex) {
+                schema.updateObj.failed = true;
+            }
+        }
+    }
+
+    private void AddSchemaToRecover(Future<Boolean> runningFuture, EtlSchema schema) {
+        Logger.getLogger(EtlModule.class.getName())
+                .log(Level.INFO, "{0} schema failed. Recover started.", schema.toString());
+        schema.updateObj.failed = true;
+        // Nie usuwamy ostaniego punktu kontrolnego,
+        // więc zostanie wczytany przy najstępnym uruchomieniu
+        failedSchemas.put(runningFuture, schema);
+    }
+
+    private void DeleteSchemaFromDatabase(EtlSchema schema) {
+        // W przypadku powodzenia mozna usunąc punkty kontrolne z bazy
+        Logger.getLogger(EtlModule.class.getName())
+                .log(Level.INFO, "{0} finished with success", schema.toString());
+        schema.updateObj.failed = false;
+        try {
+            dataProvider.deleteBackup(schema.schemaId);
+        } catch (SQLException ex) {
+            Logger.getLogger(EtlModule.class.getName()).log(Level.SEVERE, null, ex);
+        }
+    }
+
+    private void UpdateModuleDataSourceWithDataFromInputQueue(List<Tuple> tankTuples) {
+        // Pobranie danych do zrodla danych modulu
+        getModuleInputQueue().drainTo(tankTuples, 1000);
+    }
+
+    private void RunAllSchemasInThreadPoolAndReturnFutures(List<Tuple> tankTuples) {
+        // Uruchomienie wszysctkich schematow w puli. Zwracana jest kolecja
+        // zawierajaca schemat oraz wynik jego działania.
+        for (IEtlSchema schema : schemas) {
+            
+            schema.setSource(tankTuples);
+            
+            Future<Boolean> future = executor.submit((EtlSchema)schema);
+            Logger.getLogger(EtlModule.class.getName())
+                    .log(Level.INFO, "{0} submited.", schema.toString());
+                        
+            runningSchemas.put(future, ((EtlSchema)schema));
+        }
+    }
+
+    private void waitIfModuleInputQueueIsEmpty() {
+        if (getModuleInputQueue().isEmpty())
+        {
+            try {
+                Thread.sleep(2000);
+            } catch (InterruptedException ex) {
+                
+            }
+        }
+    }
+
+    @Override
+    public void interrupt() {
+        // Przerwanie wybranego schematu
+        Future<Boolean> runningFuture = runningSchemas.keySet().iterator().next();
+        EtlSchema schema = runningSchemas.values().iterator().next();
+        if (runningFuture.cancel(true)) {            
+            schema.updateObj.runIdx = 0;
+            Logger.getLogger(EtlModule.class.getName()).log(Level.WARNING, "{0} canceled", schema.toString());
+        }
+        else {            
+            Logger.getLogger(EtlModule.class.getName()).log(Level.WARNING, "{0} not canceled", schema.toString());
+        }
+        
+        // Przerwanie dla całego modułu
+//        networkReader.interrupt();
+//        if (executor != null) executor.shutdownNow();
+//        isRunning = false;
+//        updateObj.failCounter++;
+//        super.interrupt(); 
+    }
+    
+}

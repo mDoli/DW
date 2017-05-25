@@ -1,0 +1,63 @@
+package stretl.source;
+
+import java.net.DatagramSocket;
+import java.net.InetSocketAddress;
+import java.net.SocketException;
+import java.util.concurrent.LinkedBlockingQueue;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.base.BaseModuleChannel;
+import stretl.common.Tuple;
+import stretl.network.NetworkTupleReader;
+import stretl.network.NetworkTupleWriter;
+
+/**
+ * Klasa źródła danych. 
+ * 
+ * Obiekt tej klasy jest wykorzystywany do nasłuchiwania
+ * krotek z podanego źródła, na danym porcie sieciowym Rozszerza klasę Thread,
+ * przez co, jako osobny wątek nie blokuje działania innych warstw systemu
+ * silnika przetwarznia strumieniowego.
+ *
+ * @author Artur Drzeniek <artudrz156@student.polsl.pl>
+ */
+public class SourceModule extends BaseModuleChannel {
+
+    /**
+     * Tuple listening socket.
+     */
+    public final DatagramSocket datagramSocket;
+    
+    /**
+     * Tworzy instancję obiektu klasy Source.
+     *
+     * @param socketAddress
+     * @throws SocketException Gdy niepowiedzie się utworzenie socketu.
+     */
+    public SourceModule(InetSocketAddress socketAddress) throws SocketException {
+        super(socketAddress.getPort(), null);
+        this.datagramSocket = new DatagramSocket(socketAddress);
+    }
+
+    @Override
+    public void run() {
+        
+        NetworkTupleWriter ntw = new NetworkTupleWriter(this);
+        ntw.start();
+        
+        NetworkTupleReader ntr = new NetworkTupleReader(this);
+        
+        while (!Thread.interrupted()) {
+            Tuple tuple = ntr.receiveTuple(datagramSocket);            
+            if (tuple == null) continue;
+            
+            tuple.setOpeningTimestamp(System.currentTimeMillis());
+            tuple.setId(System.nanoTime());
+            Logger.getLogger(SourceModule.class.getName()).log(Level.INFO, tuple.toString());
+            for (LinkedBlockingQueue<Tuple> output : outputQueues.values()) {
+                Tuple tupleCopy = tuple.clone();
+                output.add(tupleCopy);
+            }
+        }
+    }
+}

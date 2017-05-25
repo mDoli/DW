@@ -1,0 +1,48 @@
+package stretl.etl.extractor;
+
+import java.util.List;
+import java.util.logging.Level;
+import java.util.logging.Logger;
+import stretl.common.Tuple;
+import stretl.etl.UpdateObj;
+import stretl.etl.outputReady.OutputReadyArgs;
+import stretl.etl.schema.SchemaElement;
+
+/**
+ * Data extractor base class.
+ * @author Artur
+ */
+public abstract class Extractor extends SchemaElement {
+    
+    /**
+     * Process shared update object.
+     */
+    protected UpdateObj updateObj;
+
+    public Extractor(List<Tuple> source, UpdateObj updateObj, int schemaId) {
+        super(schemaId);
+        this.input = source;
+        this.updateObj = updateObj;
+    }
+    
+    /**
+     * Extract data from source when provided.
+     * @return TRUE if succeded otherwhise FALSE.
+     */
+    protected abstract boolean extract();
+    
+    public void begin() {
+        //Logger.getLogger(this.getClass().getSimpleName()).log(Level.INFO, "Extraction started.");
+                
+        success = extract();
+        
+        if (success) {  
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.FINE, "Extracted {0} tuples", output.size());
+            
+            notifyAllListeners(new OutputReadyArgs(output));
+        }
+        else {
+            Logger.getLogger(this.getClass().getSimpleName()).log(Level.WARNING, "Extraction failed.");
+        }
+    }
+}
